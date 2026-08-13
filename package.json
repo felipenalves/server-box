@@ -1,0 +1,10 @@
+{
+  "name": "server-box",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "description": "Painel de status para servidor caseiro em Android (Termux) — zero deps, Node puro."
+}

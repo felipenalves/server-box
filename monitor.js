@@ -1,0 +1,450 @@
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+/**
+ * Monitor de saúde do HOST (o J5, único servidor do projeto; o Mac nunca roda
+ * serviço em background). Lê tudo local: /proc, sysfs da bateria, df,
+ * crontab, processos e o estado do digest.
+ */
+
+const TTL_MS = 3_000;
+const HISTORY_WINDOW_MS = 90_000;
+const HISTORY_MAX = 90;
+const HISTORY_KEYS = ["j5.bat", "j5.ram"];
+const DIGEST_STALE_MS = 12 * 60 * 60 * 1000;
+const NEWS_DIR = join(homedir(), "newsdigest");
+
+function readFile(path) {
+  try { return readFileSync(path, "utf8"); } catch { return null; }
+}
+
+function sh(cmd) {
+  try {
+    return execFileSync("sh", ["-c", cmd], { encoding: "utf8", timeout: 3_000 });
+  } catch {
+    return null;
+  }
+}
+
+export function parseUptimeOutput(raw) {
+  if (!raw) return null;
+
+  const loadMatch = raw.match(/load average[s]?:\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i);
+  const upMatch = raw.match(/\bup\s+(.+?)(?:,\s*load average[s]?:|$)/i);
+  if (!loadMatch && !upMatch) return null;
+
+  let uptime = null;
+  if (upMatch) {
+    const duration = upMatch[1];
+    const days = +(duration.match(/(\d+)\s+days?/i) || [])[1] || 0;
+    const minutes = +(duration.match(/(\d+)\s+mins?/i) || [])[1] || 0;
+    const clock = duration.match(/(\d+):(\d+)/);
+    const clockSeconds = clock ? (+clock[1] * 3600) + (+clock[2] * 60) : 0;
+    uptime = (days * 86400) + (minutes * 60) + clockSeconds;
+  }
+
+  return {
+    uptime,
+    load: loadMatch ? loadMatch.slice(1, 4).map(Number) : null,
+  };
+}
+
+function cronValues(field, min, max) {
+  const values = new Set();
+  for (const piece of String(field).split(",")) {
+    const [base, rawStep] = piece.split("/");
+    const step = rawStep == null ? 1 : Number(rawStep);
+    if (!Number.isInteger(step) || step < 1) return null;
+
+    if (base === "*") {
+      for (let value = min; value <= max; value += step) values.add(value);
+      continue;
+    }
+
+    const range = base.match(/^(\d+)-(\d+)$/);
+    if (range) {
+      const start = Number(range[1]);
+      const end = Number(range[2]);
+      if (start < min || end > max || start > end) return null;
+      for (let value = start; value <= end; value += step) values.add(value);
+      continue;
+    }
+
+    if (!/^\d+$/.test(base)) return null;
+    const value = Number(base);
+    if (value < min || value > max) return null;
+    values.add(value);
+  }
+  return [...values].sort((a, b) => a - b);
+}
+
+export function nextCronRun(expression, from = new Date()) {
+  const parts = String(expression || "").trim().split(/\s+/);
+  if (parts.length !== 5) return null;
+  if (parts.slice(2).some(part => part !== "*")) return null;
+
+  const minutes = cronValues(parts[0], 0, 59);
+  const hours = cronValues(parts[1], 0, 23);
+  if (!minutes || !hours) return null;
+
+  const candidate = new Date(from);
+  candidate.setSeconds(0, 0);
+  candidate.setMinutes(candidate.getMinutes() + 1);
+
+  for (let attempt = 0; attempt < 8 * 24 * 60; attempt += 1) {
+    if (hours.includes(candidate.getHours()) && minutes.includes(candidate.getMinutes())) {
+      return candidate.toISOString();
+    }
+    candidate.setMinutes(candidate.getMinutes() + 1);
+  }
+  return null;
+}
+
+function formatTimes(values, minute) {
+  return values
+    .map(hour => `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`)
+    .join(", ")
+    .replace(/, ([^,]+)$/, " e $1");
+}
+
+export function formatCronSchedule(expression) {
+  const parts = String(expression || "").trim().split(/\s+/);
+  if (parts.length === 1 && parts[0].startsWith("@")) {
+    const labels = {
+      "@reboot": "ao iniciar",
+      "@hourly": "a cada hora",
+      "@daily": "diariamente",
+      "@weekly": "semanalmente",
+      "@monthly": "mensalmente",
+      "@annually": "anualmente",
+      "@yearly": "anualmente",
+    };
+    return labels[parts[0]] || parts[0];
+  }
+
+  if (parts.length === 5 && parts[2] === "*" && parts[3] === "*" && parts[4] === "*") {
+    const minute = Number(parts[0]);
+    const hours = cronValues(parts[1], 0, 23);
+    if (Number.isInteger(minute) && minute >= 0 && minute <= 59 && hours?.length) {
+      return `diariamente às ${formatTimes(hours, minute)}`;
+    }
+  }
+  return `cron ${String(expression || "não definido")}`;
+}
+
+export function parseCrontab(raw) {
+  if (!raw) return [];
+  const jobs = [];
+
+  for (const line of String(raw).split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(trimmed)) continue;
+
+    const parts = trimmed.split(/\s+/);
+    const special = parts[0].startsWith("@");
+    if ((!special && parts.length < 6) || (special && parts.length < 2)) continue;
+
+    const expression = special ? parts[0] : parts.slice(0, 5).join(" ");
+    const command = parts.slice(special ? 1 : 5).join(" ");
+    const isDigest = /newsdigest|digest\.mjs/i.test(command);
+    const isServerBox = /server-box|server\.js/i.test(command);
+    const kind = isDigest ? "newsdigest" : isServerBox ? "server-box" : "generic";
+    const baseId = kind === "newsdigest" ? "newsdigest" : kind === "server-box" ? "server-box-boot" : `cron-${jobs.length + 1}`;
+    const id = jobs.some(job => job.id === baseId) ? `${baseId}-${jobs.length + 1}` : baseId;
+
+    jobs.push({
+      id,
+      name: kind === "newsdigest" ? "Newsdigest" : kind === "server-box" ? "Server-box" : `Cron ${jobs.length + 1}`,
+      kind,
+      expression,
+      schedule: formatCronSchedule(expression),
+    });
+  }
+  return jobs;
+}
+
+export function summarizeHistory(points) {
+  const values = (Array.isArray(points) ? points : [])
+    .map(point => Array.isArray(point) ? Number(point[1]) : Number(point?.v))
+    .filter(Number.isFinite);
+  if (!values.length) return { count: 0, min: null, max: null, latest: null, delta: null };
+
+  const latest = values[values.length - 1];
+  return {
+    count: values.length,
+    min: Math.min(...values),
+    max: Math.max(...values),
+    latest,
+    delta: values.length > 1 ? latest - values[0] : null,
+  };
+}
+
+function processInfo(raw, pattern) {
+  if (!raw) return { running: null, pid: null };
+  for (const line of String(raw).split("\n")) {
+    if (!pattern.test(line)) continue;
+    const pid = line.trim().split(/\s+/).find(token => /^\d+$/.test(token));
+    return { running: true, pid: pid ? Number(pid) : null };
+  }
+  return { running: false, pid: null };
+}
+
+function collectHost() {
+  const out = { mem: null, load: null, uptime: null, disk: null, bat: null, digest: null, cores: null, cpuTemp: null };
+
+  try {
+    const mem = {};
+    const s = readFile("/proc/meminfo") || "";
+    for (const ln of s.split("\n")) {
+      const m = /^(\w+):\s+(\d+)/.exec(ln);
+      if (m) mem[m[1]] = +m[2] * 1024;
+    }
+    out.mem = { total: mem.MemTotal || 0, avail: mem.MemAvailable || 0 };
+  } catch {}
+
+  try {
+    const raw = readFile("/proc/loadavg");
+    if (raw) {
+      const values = raw.trim().split(/\s+/).slice(0, 3).map(Number);
+      if (values.length === 3 && values.every(Number.isFinite)) out.load = values;
+    }
+  } catch {}
+
+  try {
+    const raw = readFile("/proc/uptime");
+    const seconds = raw ? Number(raw.trim().split(/\s+/)[0]) : NaN;
+    if (Number.isFinite(seconds)) out.uptime = seconds;
+  } catch {}
+
+  if (out.load === null || out.uptime === null) {
+    const fallback = parseUptimeOutput(sh("uptime"));
+    if (fallback) {
+      if (out.load === null) out.load = fallback.load;
+      if (out.uptime === null) out.uptime = fallback.uptime;
+    }
+  }
+
+  try {
+    const ci = readFile("/proc/cpuinfo") || "";
+    out.cores = (ci.match(/^processor\s*:/gm) || []).length || null;
+  } catch {}
+
+  try {
+    const base = "/sys/class/thermal";
+    const list = sh(`ls ${base} 2>/dev/null | grep thermal_zone`);
+    if (list) {
+      for (const z of String(list).trim().split("\n")) {
+        const type = ((readFile(`${base}/${z}/type`) || "").trim() || "").toLowerCase();
+        if (type.includes("cpu")) {
+          const raw = +(readFile(`${base}/${z}/temp`) || "").trim();
+          if (raw) { out.cpuTemp = Math.round(raw / 1000); break; }
+        }
+      }
+    }
+  } catch {}
+
+  try {
+    const df = sh("df -k /data 2>/dev/null") || sh("df -k / 2>/dev/null");
+    const lines = String(df).trim().split("\n");
+    const l = lines[lines.length - 1].split(/\s+/);
+    out.disk = { total: +l[1] * 1024, used: +l[2] * 1024, avail: +l[3] * 1024 };
+  } catch {}
+
+  try {
+    const cap = (readFile("/sys/class/power_supply/battery/capacity") || "").trim();
+    const st = (readFile("/sys/class/power_supply/battery/status") || "").trim();
+    const tmp = (readFile("/sys/class/power_supply/battery/temp") || "").trim();
+    if (cap) out.bat = { pct: +cap, status: st || null, temp: tmp ? Math.round(+tmp / 10) : null };
+  } catch {}
+
+  try {
+    const stateRaw = readFile(join(NEWS_DIR, "state.json"));
+    const state = stateRaw ? JSON.parse(stateRaw) : null;
+    const lines = (readFile(join(NEWS_DIR, "digest.log")) || "").trim().split("\n").filter(Boolean);
+    if (state || lines.length) {
+      out.digest = {
+        last_run: state?.last_run || null,
+        sent: state?.sent ? Object.keys(state.sent).length : 0,
+        log: lines.length ? lines[lines.length - 1] : null,
+      };
+    }
+  } catch {}
+
+  return out;
+}
+
+function collectCron(processes, digest, now) {
+  const schedulerProcess = processInfo(processes, /\bcrond\b/i);
+  const schedulerState = schedulerProcess.running === true
+    ? "ok"
+    : schedulerProcess.running === false ? "error" : "unknown";
+  const crontabAvailable = sh("command -v crontab 2>/dev/null") !== null;
+  const raw = crontabAvailable ? sh("crontab -l 2>/dev/null") : null;
+  const parsedJobs = parseCrontab(raw);
+
+  const jobs = parsedJobs.map(job => {
+    const lastRun = job.kind === "newsdigest" ? digest?.last_run || null : null;
+    const lastAt = lastRun ? Date.parse(lastRun) : NaN;
+    const stale = job.kind === "newsdigest" && (!Number.isFinite(lastAt) || now - lastAt > DIGEST_STALE_MS);
+    const state = job.kind !== "newsdigest" ? "ok" : !lastRun ? "unknown" : stale ? "warn" : "ok";
+    return {
+      id: job.id,
+      name: job.name,
+      kind: job.kind,
+      expression: job.expression,
+      schedule: job.schedule,
+      state,
+      last_run: lastRun,
+      next_run: nextCronRun(job.expression, new Date(now)),
+      age_ms: Number.isFinite(lastAt) ? Math.max(0, now - lastAt) : null,
+      sent: job.kind === "newsdigest" ? digest?.sent ?? null : null,
+      log: job.kind === "newsdigest" ? digest?.log ?? null : null,
+    };
+  });
+
+  const state = schedulerState === "error"
+    ? "error"
+    : schedulerState === "unknown" || !jobs.length || jobs.some(job => job.state === "warn" || job.state === "unknown")
+      ? "warn"
+      : "ok";
+
+  return {
+    state,
+    available: crontabAvailable,
+    scheduler: {
+      name: "crond",
+      state: schedulerState,
+      pid: schedulerProcess.pid,
+    },
+    jobs,
+  };
+}
+
+function collectServices(processes, cron) {
+  const digestProcess = processInfo(processes, /(?:node\s+.*digest\.mjs|\bdigest\.mjs\b)/i);
+  return [
+    {
+      id: "server-box",
+      name: "server-box",
+      state: "ok",
+      pid: process.pid,
+      detail: `PID ${process.pid}`,
+    },
+    {
+      id: "crond",
+      name: "crond",
+      state: cron.scheduler.state,
+      pid: cron.scheduler.pid,
+      detail: cron.scheduler.state === "ok" ? "agendador ativo" : "agendador não confirmado",
+    },
+    {
+      id: "newsdigest",
+      name: "newsdigest",
+      state: digestProcess.running === true ? "ok" : digestProcess.running === false ? "idle" : "unknown",
+      pid: digestProcess.pid,
+      detail: digestProcess.running === true ? "executando agora" : "aguardando próximo cron",
+    },
+  ];
+}
+
+function resourceState(pct) {
+  if (!Number.isFinite(pct)) return "unknown";
+  if (pct >= 95) return "error";
+  if (pct >= 85) return "warn";
+  return "ok";
+}
+
+export function deriveHealth(host, cron, services, now = Date.now()) {
+  if (!host || !host.mem || !host.mem.total) {
+    return {
+      state: "offline",
+      label: "Offline",
+      reason: "O J5 não respondeu às métricas do host.",
+      issues: [{ state: "offline", code: "host-unavailable", message: "Métricas do host indisponíveis." }],
+    };
+  }
+
+  const issues = [];
+  const addIssue = (state, code, message) => issues.push({ state, code, message });
+  const ramPct = ((host.mem.total - host.mem.avail) / host.mem.total) * 100;
+  const diskPct = host.disk?.total ? (host.disk.used / host.disk.total) * 100 : null;
+  const batteryPct = host.bat?.pct;
+
+  if (resourceState(ramPct) === "error") addIssue("error", "ram-critical", `RAM em ${Math.round(ramPct)}%.`);
+  else if (resourceState(ramPct) === "warn") addIssue("warn", "ram-high", `RAM em ${Math.round(ramPct)}%.`);
+  if (resourceState(diskPct) === "error") addIssue("error", "disk-critical", `Disco em ${Math.round(diskPct)}%.`);
+  else if (resourceState(diskPct) === "warn") addIssue("warn", "disk-high", `Disco em ${Math.round(diskPct)}%.`);
+  if (Number.isFinite(batteryPct) && batteryPct <= 20) addIssue("error", "battery-critical", `Bateria em ${Math.round(batteryPct)}%.`);
+  else if (Number.isFinite(batteryPct) && batteryPct <= 50) addIssue("warn", "battery-low", `Bateria em ${Math.round(batteryPct)}%.`);
+
+  if (cron?.scheduler?.state === "error") addIssue("error", "crond-down", "O agendador crond não foi encontrado.");
+  else if (cron?.scheduler?.state !== "ok") addIssue("warn", "crond-unknown", "O estado do agendador crond não foi confirmado.");
+  if (cron?.jobs?.length === 0) addIssue("warn", "no-cron-jobs", "Nenhum job ativo foi encontrado no crontab.");
+  for (const job of cron?.jobs || []) {
+    if (job.state === "unknown") addIssue("warn", `${job.id}-unknown`, `${job.name} ainda não tem uma execução registrada.`);
+    if (job.state === "warn") addIssue("warn", `${job.id}-stale`, `${job.name} está atrasado.`);
+  }
+  for (const service of services || []) {
+    if (service.id !== "newsdigest" && ["error", "unknown"].includes(service.state)) {
+      addIssue(service.state === "error" ? "error" : "warn", `${service.id}-${service.state}`, `${service.name} não está confirmado.`);
+    }
+  }
+
+  const state = issues.some(issue => issue.state === "error")
+    ? "error"
+    : issues.length ? "warn" : "ok";
+  const labels = { ok: "Operacional", warn: "Atenção", error: "Crítico", offline: "Offline" };
+  return {
+    state,
+    label: labels[state],
+    reason: issues[0]?.message || "Métricas, agendamentos e serviços normais.",
+    issues,
+    checked_at: new Date(now).toISOString(),
+  };
+}
+
+export function createMonitor() {
+  let cache = null;
+  const history = new Map();
+  for (const key of HISTORY_KEYS) history.set(key, []);
+
+  function push(key, time, value) {
+    if (value == null || !Number.isFinite(value)) return;
+    const points = history.get(key) || [];
+    points.push([time, value]);
+    while (points.length && time - points[0][0] > HISTORY_WINDOW_MS) points.shift();
+    while (points.length > HISTORY_MAX) points.shift();
+    history.set(key, points);
+  }
+
+  async function collect() {
+    const at = Date.now();
+    const host = collectHost();
+    push("j5.bat", at, host.bat ? host.bat.pct : null);
+    push("j5.ram", at, host.mem && host.mem.total
+      ? Math.round(((host.mem.total - host.mem.avail) / host.mem.total) * 100)
+      : null);
+
+    const processes = sh("ps -A 2>/dev/null || ps 2>/dev/null");
+    const cron = collectCron(processes, host.digest, at);
+    const services = collectServices(processes, cron);
+    const status = deriveHealth(host, cron, services, at);
+    const data = { at, j5: host, j5via: "local", cron, services, status, history: {}, history_stats: {} };
+    for (const [key, points] of history) {
+      data.history[key] = points;
+      data.history_stats[key] = summarizeHistory(points);
+    }
+    return data;
+  }
+
+  return {
+    async get() {
+      if (cache && Date.now() - cache.at < TTL_MS) return cache.data;
+      const data = await collect();
+      cache = { at: Date.now(), data };
+      return data;
+    },
+  };
+}
