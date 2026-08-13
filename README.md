@@ -22,8 +22,6 @@ Abre no navegador:
 - rede local: `http://SEU_IP:8080`
 - de fora (com Tailscale): `http://100.x.y.z:8080`
 
-Um PIN de 4 dígitos é gerado na primeira execução e salvo em `.j5-pin` (use `cat .j5-pin` pra ver). A página pede o PIN uma vez.
-
 ## Deixar rodando sempre
 
 No Termux, com o cron ativo (`sv-enable crond`), agende o boot:
@@ -59,7 +57,7 @@ node --test test/*.test.mjs
 
 ## Segurança
 
-- PIN de 4 dígitos em `.j5-pin` (gitignored) — protege a página
-- Headers de segurança básicos (nosniff, frame deny, referrer)
-- Sem dependências externas, sem internet fora da sua rede (a menos que você abra via Tailscale)
+- Acesso só pela sua rede: a página e a API respondem na rede local e/ou na VPN Tailscale
 - Não abra porta no roteador: use Tailscale pra acesso remoto
+- Headers de segurança básicos (nosniff, frame deny, referrer)
+- Sem dependências externas, sem internet fora da sua rede
