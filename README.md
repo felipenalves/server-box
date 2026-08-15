@@ -1,8 +1,15 @@
 # Server Box
 
-Painel de status para servidor caseiro em Android (Termux) — ou qualquer máquina Node.
+Painel de status do teu servidor de bolso. Feito pra rodar num celular Android velho (Termux) e ver, numa página só, se o troço tá vivo:
 
-Mostra numa página só: uptime, carga, bateria, RAM, cron, processos do app e saúde do news digest. Zero dependências: só Node puro, sem `npm install`.
+- **Sistema** — uptime, carga, hostname
+- **Bateria** — nível, carregando ou descarregando
+- **Memória e disco** — RAM, uso de disco
+- **Cron** — o que tá agendado e rodando
+- **Apps** — processos `node` vivos
+- **News digest** — estado do `~/newsdigest` (some se não existir)
+
+Zero dependências: Node puro, sem `npm install`, sem internet pra fora da tua rede.
 
 > Feito pra acompanhar o guia [Como Transformar um Celular Velho em Servidor Pessoal](https://inovadigitalid.com/guia/servidor-j5-prime). MIT.
 
@@ -24,7 +31,7 @@ Abre no navegador:
 
 ## Deixar rodando sempre
 
-No Termux, com o cron ativo (`sv-enable crond`), agende o boot:
+Com o cron ativo no Termux (`sv-enable crond`):
 
 ```bash
 crontab -e
@@ -36,19 +43,6 @@ Adicione a linha (ajuste o caminho se o projeto não estiver em `~/app`):
 @reboot sh ~/app/server-box/run.sh
 ```
 
-## O que o painel mostra
-
-| Bloco | O que lê |
-|---|---|
-| Sistema | `/proc/uptime`, load average, hostname |
-| Bateria | `sysfs` (nível, status carregando/descarregando) |
-| Memória | `/proc/meminfo` |
-| Cron | `crontab -l` + processos vivos |
-| Apps | processos `node` em execução |
-| News digest | estado do `~/newsdigest` (opcional — some se não existir) |
-
-A página atualiza sozinha e tem tema claro/escuro.
-
 ## Testes
 
 ```bash
@@ -57,7 +51,6 @@ node --test test/*.test.mjs
 
 ## Segurança
 
-- Acesso só pela sua rede: a página e a API respondem na rede local e/ou na VPN Tailscale
-- Não abra porta no roteador: use Tailscale pra acesso remoto
-- Headers de segurança básicos (nosniff, frame deny, referrer)
-- Sem dependências externas, sem internet fora da sua rede
+- Acesso só pela tua rede (local ou Tailscale). Não abra porta no roteador.
+- Headers de segurança básicos (nosniff, frame deny, referrer policy).
+- Sem PIN de propósito: a proteção é a rede, não uma senha de 4 dígitos.
