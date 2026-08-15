@@ -30,7 +30,7 @@ export async function readPinFile(root = import.meta.dirname) {
 /** Persiste o pin no arquivo .j5-pin. */
 export async function writePinFile(pin, root = import.meta.dirname) {
   if (!PIN_RE.test(pin)) throw new Error("pin inválido");
-  await writeFile(pinFilePath(root), pin + "\n", "utf8");
+  await writeFile(pinFilePath(root), pin + "\n", { encoding: "utf8", mode: 0o600 });
 }
 
 /** Garante que exista um pin válido no arquivo .j5-pin. Retorna o pin. */
