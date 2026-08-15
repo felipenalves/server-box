@@ -332,29 +332,6 @@
     line-height: 1.1;
   }
   .metric-meta { display: block; margin-top: 4px; color: var(--ink-3); font-size: 11px; }
-  .details-toggle {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    width: 100%;
-    margin-top: 14px;
-    padding: 0;
-    border: 0;
-    background: transparent;
-    color: var(--ink-3);
-    cursor: pointer;
-    font-size: 11px;
-    text-align: left;
-  }
-  .details-toggle span:last-child {
-    color: var(--ink-2);
-    font-size: 16px;
-    line-height: 1;
-    transition: transform .2s ease;
-  }
-  .details-toggle[aria-expanded="true"] span:last-child { transform: rotate(180deg); }
-  .details-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-
   .two-column { display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(280px, .88fr); gap: var(--space-xl); }
   .two-column > .surface { min-width: 0; }
   .ops-list { border-top: 1px solid var(--line-soft); }
@@ -783,10 +760,7 @@
           <div class="resource-value" id="batteryValue">—</div>
         </article>
       </div>
-      <button class="details-toggle" id="systemDetailsToggle" type="button" aria-expanded="false" aria-controls="systemDetails">
-        <span>Ver detalhes do sistema</span><span aria-hidden="true">⌄</span>
-      </button>
-      <div class="metric-strip system-details" id="systemDetails" aria-label="Detalhes do host" hidden>
+      <div class="metric-strip system-details" id="systemDetails" aria-label="Detalhes do host">
         <div class="metric"><span class="metric-label">Carga</span><strong class="metric-value" id="loadValue">—</strong><small class="metric-meta" id="loadMeta">1m · 5m · 15m</small></div>
         <div class="metric"><span class="metric-label">Uptime</span><strong class="metric-value" id="uptimeValue">—</strong><small class="metric-meta">tempo ligado</small></div>
         <div class="metric"><span class="metric-label">Temperatura</span><strong class="metric-value" id="temperatureValue">—</strong><small class="metric-meta" id="temperatureMeta">CPU · sem leitura</small></div>
@@ -869,14 +843,6 @@
     applyTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light");
   });
   initTheme();
-
-  $("systemDetailsToggle").addEventListener("click", function(){
-    var button = $("systemDetailsToggle");
-    var details = $("systemDetails");
-    var open = button.getAttribute("aria-expanded") === "true";
-    button.setAttribute("aria-expanded", String(!open));
-    details.hidden = open;
-  });
 
   function clock(){
     var now = new Date();

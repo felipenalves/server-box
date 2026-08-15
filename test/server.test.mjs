@@ -19,8 +19,9 @@ test("libera métricas na rede sem pedir PIN", async t => {
   assert.ok(body.history_stats);
 
   const html = await (await fetch(`${base}/`)).text();
-  assert.match(html, /id="systemDetailsToggle"/);
-  assert.match(html, /id="systemDetails"/);
+  assert.doesNotMatch(html, /id="systemDetailsToggle"/);
+  assert.match(html, /id="systemDetails"[^>]*aria-label="Detalhes do host"[^>]*>/);
+  assert.doesNotMatch(html, /id="systemDetails"[^>]*\bhidden\b/);
   assert.match(html, /id="operationList"/);
   assert.doesNotMatch(html, /id="cronTitle"/);
   assert.doesNotMatch(html, /id="serviceTitle"/);
