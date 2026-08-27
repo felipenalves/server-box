@@ -1,9 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { startServer } from "../server.js";
 
 const publicRoot = fileURLToPath(new URL("../public", import.meta.url));
+
+test("run.sh inicia o servidor a partir da própria pasta", async () => {
+  const runScript = await readFile(new URL("../run.sh", import.meta.url), "utf8");
+  assert.match(runScript, /cd \"\$\(dirname \"\$0\"\)\"/);
+  assert.match(runScript, /exec node server\.js/);
+});
 
 test("libera métricas na rede sem pedir PIN", async t => {
   const running = await startServer({ port: 0, root: publicRoot });
