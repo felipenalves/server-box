@@ -4,9 +4,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 /**
- * Monitor de saúde do HOST (o J5, único servidor do projeto; o Mac nunca roda
- * serviço em background). Lê tudo local: /proc, sysfs da bateria, df,
- * crontab, processos e o estado do digest.
+ * Monitor de saúde do host Android (o Mac nunca roda serviço em background).
+ * Lê tudo local: /proc, propriedades do Android, sysfs/Termux:API da bateria,
+ * df, crontab, processos e o estado do digest.
  */
 
 const TTL_MS = 3_000;
@@ -26,6 +26,147 @@ function sh(cmd) {
   } catch {
     return null;
   }
+}
+
+function cleanText(value) {
+  const text = value == null ? "" : String(value).trim();
+  return text && !["unknown", "<unknown>", "n/a", "null"].includes(text.toLowerCase()) ? text : null;
+}
+
+function numberOrNull(value) {
+  if (value == null || String(value).trim() === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function percentageOrNull(value) {
+  const number = numberOrNull(value);
+  return number != null && number >= 0 && number <= 100 ? number : null;
+}
+
+export function parseGetpropOutput(raw) {
+  const props = {};
+  for (const line of String(raw || "").split("\n")) {
+    const match = line.match(/^\[([^\]]+)\]\s*:\s*\[([^\]]*)\]\s*$/)
+      || line.match(/^([\w.-]+)\s*[:=]\s*(.+)$/);
+    if (!match) continue;
+    const value = cleanText(match[2]);
+    if (value) props[match[1]] = value;
+  }
+
+  const first = (...keys) => keys.map(key => props[key]).find(Boolean) || null;
+  return {
+    manufacturer: first("ro.product.manufacturer", "ro.product.vendor.manufacturer"),
+    brand: first("ro.product.brand", "ro.product.vendor.brand"),
+    model: first("ro.product.model", "ro.product.vendor.model"),
+    market_name: first("ro.product.marketname", "ro.product.market_name", "ro.product.odm.marketname"),
+    product: first("ro.product.name", "ro.product.device"),
+  };
+}
+
+function displayBrand(value) {
+  const text = cleanText(value);
+  if (!text) return null;
+  if (text.toLowerCase() === "samsung") return "Samsung";
+  return text.replace(/\b\w/g, letter => letter.toUpperCase());
+}
+
+export function formatDeviceName(device = {}) {
+  const brand = displayBrand(device.manufacturer || device.brand);
+  const model = cleanText(device.market_name || device.model || device.product);
+  if (!brand && !model) return "Android";
+  if (!brand) return model;
+  if (!model) return brand;
+  return model.toLowerCase().startsWith(brand.toLowerCase()) ? model : `${brand} ${model}`;
+}
+
+export function collectDevice({ shell = sh } = {}) {
+  const props = parseGetpropOutput(shell("getprop 2>/dev/null") || "");
+  return {
+    ...props,
+    name: formatDeviceName(props),
+    source: Object.values(props).some(Boolean) ? "getprop" : null,
+  };
+}
+
+function normalizeSysfsTemperature(value) {
+  const number = numberOrNull(value);
+  if (number == null) return null;
+  if (Math.abs(number) >= 10_000) return Math.round(number / 1_000);
+  if (Math.abs(number) >= 100) return Math.round(number / 10);
+  return number;
+}
+
+function listPowerSupplyPaths(shell) {
+  const raw = shell("ls -1 /sys/class/power_supply 2>/dev/null");
+  return String(raw || "")
+    .split("\n")
+    .map(value => value.trim())
+    .filter(Boolean)
+    .filter(value => /^[\w.-]+$/.test(value))
+    .map(value => join("/sys/class/power_supply", value));
+}
+
+function batteryPathScore(path, read) {
+  const name = String(path).split("/").pop().toLowerCase();
+  const type = cleanText(read(`${path}/type`))?.toLowerCase();
+  if (type === "battery") return 100;
+  if (type) return -1;
+  if (name === "battery") return 90;
+  if (name.includes("bms")) return 80;
+  if (name.includes("battery")) return 70;
+  return -1;
+}
+
+function readSysfsBattery(path, read) {
+  const capacity = percentageOrNull(read(`${path}/capacity`));
+  const chargeNow = numberOrNull(read(`${path}/charge_now`));
+  const chargeFull = numberOrNull(read(`${path}/charge_full`));
+  const energyNow = numberOrNull(read(`${path}/energy_now`));
+  const energyFull = numberOrNull(read(`${path}/energy_full`));
+  const calculated = chargeNow != null && chargeFull != null && chargeFull > 0 ? (chargeNow / chargeFull) * 100
+    : energyNow != null && energyFull != null && energyFull > 0 ? (energyNow / energyFull) * 100
+      : null;
+  const pct = capacity ?? percentageOrNull(calculated);
+  if (pct == null) return null;
+
+  const status = cleanText(read(`${path}/status`));
+  const temp = normalizeSysfsTemperature(read(`${path}/temp`));
+  return { pct, status, temp, source: "sysfs" };
+}
+
+export function parseTermuxBatteryStatus(raw) {
+  try {
+    const payload = JSON.parse(String(raw || ""));
+    const pct = percentageOrNull(payload.percentage ?? payload.percent);
+    if (pct == null) return null;
+    const plugged = cleanText(payload.plugged);
+    const status = cleanText(payload.status) || (plugged && plugged.toUpperCase() !== "UNPLUGGED" ? "CHARGING" : null);
+    return {
+      pct,
+      status,
+      temp: numberOrNull(payload.temperature),
+      source: "termux-api",
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function collectBattery({ read = readFile, shell = sh, paths } = {}) {
+  const candidates = (Array.isArray(paths) ? paths : listPowerSupplyPaths(shell))
+    .map(path => ({ path, score: batteryPathScore(path, read) }))
+    .filter(candidate => candidate.score >= 0)
+    .sort((a, b) => b.score - a.score);
+
+  for (const candidate of candidates) {
+    const battery = readSysfsBattery(candidate.path, read);
+    if (battery) return battery;
+  }
+
+  const fromTermux = parseTermuxBatteryStatus(shell("termux-battery-status 2>/dev/null") || "");
+  if (fromTermux) return fromTermux;
+  return { pct: null, status: null, temp: null, source: null, reason: "não exposta pelo sistema" };
 }
 
 export function parseUptimeOutput(raw) {
@@ -192,7 +333,7 @@ function processInfo(raw, pattern) {
 }
 
 function collectHost() {
-  const out = { mem: null, load: null, uptime: null, disk: null, bat: null, digest: null, cores: null, cpuTemp: null };
+  const out = { device: collectDevice(), mem: null, load: null, uptime: null, disk: null, bat: null, digest: null, cores: null, cpuTemp: null };
 
   try {
     const mem = {};
@@ -252,19 +393,16 @@ function collectHost() {
     out.disk = { total: +l[1] * 1024, used: +l[2] * 1024, avail: +l[3] * 1024 };
   } catch {}
 
-  try {
-    const cap = (readFile("/sys/class/power_supply/battery/capacity") || "").trim();
-    const st = (readFile("/sys/class/power_supply/battery/status") || "").trim();
-    const tmp = (readFile("/sys/class/power_supply/battery/temp") || "").trim();
-    if (cap) out.bat = { pct: +cap, status: st || null, temp: tmp ? Math.round(+tmp / 10) : null };
-  } catch {}
+  try { out.bat = collectBattery(); } catch {}
 
   try {
     const stateRaw = readFile(join(NEWS_DIR, "state.json"));
+    const logRaw = readFile(join(NEWS_DIR, "digest.log"));
     const state = stateRaw ? JSON.parse(stateRaw) : null;
-    const lines = (readFile(join(NEWS_DIR, "digest.log")) || "").trim().split("\n").filter(Boolean);
-    if (state || lines.length) {
+    const lines = (logRaw || "").trim().split("\n").filter(Boolean);
+    if (stateRaw !== null || logRaw !== null) {
       out.digest = {
+        available: true,
         last_run: state?.last_run || null,
         sent: state?.sent ? Object.keys(state.sent).length : 0,
         log: lines.length ? lines[lines.length - 1] : null,
@@ -277,12 +415,14 @@ function collectHost() {
 
 function collectCron(processes, digest, now) {
   const schedulerProcess = processInfo(processes, /\bcrond\b/i);
-  const schedulerState = schedulerProcess.running === true
-    ? "ok"
-    : schedulerProcess.running === false ? "error" : "unknown";
   const crontabAvailable = sh("command -v crontab 2>/dev/null") !== null;
   const raw = crontabAvailable ? sh("crontab -l 2>/dev/null") : null;
   const parsedJobs = parseCrontab(raw);
+  const schedulerState = parsedJobs.length === 0
+    ? "idle"
+    : schedulerProcess.running === true
+      ? "ok"
+      : schedulerProcess.running === false ? "error" : "unknown";
 
   const jobs = parsedJobs.map(job => {
     const lastRun = job.kind === "newsdigest" ? digest?.last_run || null : null;
@@ -306,7 +446,7 @@ function collectCron(processes, digest, now) {
 
   const state = schedulerState === "error"
     ? "error"
-    : schedulerState === "unknown" || !jobs.length || jobs.some(job => job.state === "warn" || job.state === "unknown")
+    : schedulerState === "unknown" || jobs.some(job => job.state === "warn" || job.state === "unknown")
       ? "warn"
       : "ok";
 
@@ -322,9 +462,12 @@ function collectCron(processes, digest, now) {
   };
 }
 
-function collectServices(processes, cron) {
+export function collectServices(processes, cron, digest = null) {
   const digestProcess = processInfo(processes, /(?:node\s+.*digest\.mjs|\bdigest\.mjs\b)/i);
-  return [
+  const digestConfigured = Boolean(digest)
+    || digestProcess.running === true
+    || cron?.jobs?.some(job => job.kind === "newsdigest");
+  const services = [
     {
       id: "server-box",
       name: "server-box",
@@ -334,19 +477,24 @@ function collectServices(processes, cron) {
     },
     {
       id: "crond",
-      name: "crond",
+      name: "Agendador",
       state: cron.scheduler.state,
       pid: cron.scheduler.pid,
-      detail: cron.scheduler.state === "ok" ? "agendador ativo" : "agendador não confirmado",
+      detail: cron.scheduler.state === "ok"
+        ? "agendador ativo"
+        : cron.scheduler.state === "idle" ? "nenhuma rotina configurada" : "agendador não confirmado",
     },
-    {
+  ];
+  if (digestConfigured) {
+    services.push({
       id: "newsdigest",
-      name: "newsdigest",
+      name: "Newsdigest",
       state: digestProcess.running === true ? "ok" : digestProcess.running === false ? "idle" : "unknown",
       pid: digestProcess.pid,
       detail: digestProcess.running === true ? "executando agora" : "aguardando próximo cron",
-    },
-  ];
+    });
+  }
+  return services;
 }
 
 function resourceState(pct) {
@@ -361,7 +509,7 @@ export function deriveHealth(host, cron, services, now = Date.now()) {
     return {
       state: "offline",
       label: "Offline",
-      reason: "O J5 não respondeu às métricas do host.",
+      reason: "O Android não respondeu às métricas do host.",
       issues: [{ state: "offline", code: "host-unavailable", message: "Métricas do host indisponíveis." }],
     };
   }
@@ -379,10 +527,10 @@ export function deriveHealth(host, cron, services, now = Date.now()) {
   if (Number.isFinite(batteryPct) && batteryPct <= 20) addIssue("error", "battery-critical", `Bateria em ${Math.round(batteryPct)}%.`);
   else if (Number.isFinite(batteryPct) && batteryPct <= 50) addIssue("warn", "battery-low", `Bateria em ${Math.round(batteryPct)}%.`);
 
-  if (cron?.scheduler?.state === "error") addIssue("error", "crond-down", "O agendador crond não foi encontrado.");
-  else if (cron?.scheduler?.state !== "ok") addIssue("warn", "crond-unknown", "O estado do agendador crond não foi confirmado.");
-  if (cron?.jobs?.length === 0) addIssue("warn", "no-cron-jobs", "Nenhum job ativo foi encontrado no crontab.");
-  for (const job of cron?.jobs || []) {
+  const cronJobs = Array.isArray(cron?.jobs) ? cron.jobs : [];
+  if (cronJobs.length && cron?.scheduler?.state === "error") addIssue("error", "crond-down", "O agendador não está ativo para as rotinas configuradas.");
+  else if (cronJobs.length && cron?.scheduler?.state !== "ok") addIssue("warn", "crond-unknown", "O estado do agendador não foi confirmado.");
+  for (const job of cronJobs) {
     if (job.state === "unknown") addIssue("warn", `${job.id}-unknown`, `${job.name} ainda não tem uma execução registrada.`);
     if (job.state === "warn") addIssue("warn", `${job.id}-stale`, `${job.name} está atrasado.`);
   }
@@ -396,10 +544,12 @@ export function deriveHealth(host, cron, services, now = Date.now()) {
     ? "error"
     : issues.length ? "warn" : "ok";
   const labels = { ok: "Operacional", warn: "Atenção", error: "Crítico", offline: "Offline" };
+  const reason = issues[0]?.message
+    || (cronJobs.length ? "Métricas, agendamentos e serviços normais." : "Painel online. Nenhum cron configurado ainda.");
   return {
     state,
     label: labels[state],
-    reason: issues[0]?.message || "Métricas, agendamentos e serviços normais.",
+    reason,
     issues,
     checked_at: new Date(now).toISOString(),
   };
@@ -429,7 +579,7 @@ export function createMonitor() {
 
     const processes = sh("ps -A 2>/dev/null || ps 2>/dev/null");
     const cron = collectCron(processes, host.digest, at);
-    const services = collectServices(processes, cron);
+    const services = collectServices(processes, cron, host.digest);
     const status = deriveHealth(host, cron, services, at);
     const data = { at, j5: host, j5via: "local", cron, services, status, history: {}, history_stats: {} };
     for (const [key, points] of history) {

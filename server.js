@@ -4,6 +4,7 @@ import { join, extname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { networkInterfaces } from "node:os";
 import { createMonitor } from "./monitor.js";
+import { createDigestStats } from "./digest-stats.mjs";
 
 const MIME = {
   ".html": "text/html",
@@ -48,6 +49,7 @@ export async function startServer(opts = {}) {
   const root = opts.root ?? join(import.meta.dirname, "public");
   const port = opts.port ?? (Number(process.env.PORT) || 8080);
   const monitor = createMonitor();
+  const digestStats = createDigestStats({ newsDir: opts.newsDir });
 
   const server = createServer((req, res) => {
     const url = new URL(req.url, "http://x");
@@ -62,6 +64,14 @@ export async function startServer(opts = {}) {
     if (url.pathname === "/api/monitor") {
       Promise.resolve()
         .then(() => monitor.get())
+        .then(d => ok({ ok: true, ...d }))
+        .catch(err => fail(res, err));
+      return;
+    }
+
+    if (url.pathname === "/api/digest-stats") {
+      Promise.resolve()
+        .then(() => digestStats.get())
         .then(d => ok({ ok: true, ...d }))
         .catch(err => fail(res, err));
       return;

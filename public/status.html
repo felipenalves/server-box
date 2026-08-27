@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0c0a09">
-<title>J5 Server Box</title>
+<link id="statusFavicon" rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='12' fill='%238e8e93'/%3E%3C/svg%3E">
+<title>Server Box</title>
 <style>
   :root {
     color-scheme: dark;
@@ -90,6 +91,32 @@
     transition: transform .15s var(--ease-out);
   }
   .skip-link:focus { transform: translateY(0); }
+  @media (pointer: coarse) { .skip-link { display: none; } }
+
+  .tabbar {
+    display: flex;
+    gap: 6px;
+    padding-bottom: var(--space-xl);
+  }
+  .tab {
+    flex: 1;
+    padding: 9px 14px;
+    border: 1px solid var(--line-soft);
+    border-radius: 10px;
+    background: transparent;
+    color: var(--ink-3);
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .tab[data-active="true"] {
+    background: var(--surface);
+    border-color: var(--line);
+    color: var(--ink);
+  }
 
   .topbar {
     display: flex;
@@ -236,6 +263,7 @@
   }
   .section-header h2 { font-size: 18px; font-weight: 700; letter-spacing: -.02em; }
   .section-description { color: var(--ink-3); font-size: 12px; }
+  .operation-help { max-width: 62ch; margin: -8px 0 var(--space-lg); color: var(--ink-3); font-size: 12px; line-height: 1.5; }
   .section-count {
     color: var(--ink-3);
     font-family: var(--mono);
@@ -691,13 +719,13 @@
 </style>
 </head>
 <body data-state="loading">
-<a class="skip-link" href="#main-content">Ir para o status</a>
+<a class="skip-link" href="#tab-sistema">Ir para o status</a>
 <div class="app-shell">
   <header class="topbar">
       <div>
-        <div class="eyebrow">J5 · server box</div>
+        <div class="eyebrow">server box · host Android</div>
         <h1>Status do servidor</h1>
-        <div class="device-label">Samsung Galaxy J5 Prime · pocket VPS</div>
+        <div class="device-label" id="deviceLabel">Android · pocket VPS</div>
         <div class="clock" id="clock">—</div>
     </div>
       <div class="topbar-actions">
@@ -716,12 +744,17 @@
       </div>
   </header>
 
-  <main id="main-content">
+  <nav class="tabbar" aria-label="Painéis">
+    <button class="tab" type="button" data-tab="tab-sistema" data-active="true">Sistema</button>
+    <button class="tab" id="digestTab" type="button" data-tab="tab-digest" data-active="false" hidden>Digest</button>
+  </nav>
+
+  <main id="tab-sistema">
     <section class="surface overview" aria-labelledby="overallStatus">
       <div class="overview-copy">
         <div class="section-kicker">Estado do host</div>
         <h2 id="overallStatus">Conectando</h2>
-        <p class="overview-reason" id="overallReason">Lendo as métricas locais do J5.</p>
+        <p class="overview-reason" id="overallReason">Lendo as métricas locais do host.</p>
       </div>
       <div class="overview-meta">
         <span id="updatedAt">sem leitura</span>
@@ -776,6 +809,7 @@
         </div>
         <div class="section-count" id="operationCount">—</div>
       </div>
+      <p class="operation-help" id="operationHelp">O painel já está online. Quando você criar um cron, a rotina aparecerá aqui.</p>
       <div class="ops-list" id="operationList"><div class="empty-item">Aguardando leitura da operação.</div></div>
     </section>
 
@@ -804,6 +838,49 @@
     </section>
   </main>
 
+  <section class="surface section" id="tab-digest" hidden aria-labelledby="digestTitle">
+    <div class="section-header">
+      <div>
+        <div class="section-kicker">Newsdigest</div>
+        <h2 id="digestTitle">Digest</h2>
+      </div>
+      <div class="section-description" id="digestMeta">sem leitura</div>
+    </div>
+
+    <div class="metric-strip" id="digestSummary" aria-label="Resumo do digest">
+      <div class="metric"><span class="metric-label">Enviados</span><strong class="metric-value" id="digestSentValue">—</strong><small class="metric-meta">itens marcados</small></div>
+      <div class="metric"><span class="metric-label">Fontes</span><strong class="metric-value" id="digestSourcesValue">—</strong><small class="metric-meta" id="digestSourcesMeta">sem leitura</small></div>
+      <div class="metric"><span class="metric-label">Radar</span><strong class="metric-value" id="digestPendingValue">—</strong><small class="metric-meta">edições pendentes</small></div>
+    </div>
+
+    <div class="section-header">
+      <div>
+        <div class="section-kicker">Saúde por fonte</div>
+        <h3>Fontes</h3>
+      </div>
+      <div class="section-count" id="digestSourceCount">—</div>
+    </div>
+    <div class="resource-list" id="digestSources"><div class="empty-item">Aguardando leitura do digest.</div></div>
+
+    <div class="section-header">
+      <div>
+        <div class="section-kicker">Envios e curadoria</div>
+        <h3>Últimos 7 dias</h3>
+      </div>
+      <div class="section-description">por rodada</div>
+    </div>
+    <div class="resource-list" id="digestDays"><div class="empty-item">Aguardando leitura do digest.</div></div>
+
+    <div class="section-header">
+      <div>
+        <div class="section-kicker">Registro</div>
+        <h3>Últimas rodadas</h3>
+      </div>
+      <div class="section-description">digest.log</div>
+    </div>
+    <div class="ops-list" id="digestRuns"><div class="empty-item">Aguardando leitura do digest.</div></div>
+  </section>
+
   <footer class="foot">server-box · leitura local · atualização automática · <span id="latencyMeta">resposta —</span></footer>
 </div>
 
@@ -821,8 +898,17 @@
   var STATE_LABELS = { ok:"operacional", warn:"atenção", error:"crítico", offline:"offline", unknown:"sem leitura", idle:"aguardando" };
 
   function setState(node, state){ if (node) node.dataset.state = state || "unknown"; }
+  function setStatusFavicon(state){
+    var link = $("statusFavicon");
+    if (!link) return;
+    var color = state === "ok" ? "#30d158" : ["warn", "error", "offline"].indexOf(state) !== -1 ? "#ff453a" : "#8e8e93";
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><circle cx="16" cy="16" r="12" fill="' + color + '"/></svg>';
+    link.href = "data:image/svg+xml," + encodeURIComponent(svg);
+    link.dataset.state = state || "unknown";
+  }
   function setConnection(state, label){
     setState($("connectionStatus"), state);
+    setStatusFavicon(state);
     $("connectionLabel").textContent = label;
   }
   function escapeText(value){ return value == null ? "" : String(value); }
@@ -833,6 +919,38 @@
     if (meta) meta.content = theme === "light" ? "#f5f5f7" : "#000000";
     try { localStorage.setItem("sb-theme", theme); } catch(e){}
   }
+  function initTabbar(){
+    var tabs = Array.prototype.slice.call(document.querySelectorAll(".tab"));
+    var panels = ["tab-sistema", "tab-digest"];
+    tabs.forEach(function(tab){
+      tab.addEventListener("click", function(){
+        var target = tab.dataset.tab;
+        tabs.forEach(function(t){ t.dataset.active = t === tab ? "true" : "false"; });
+        panels.forEach(function(id){
+          var el = $(id);
+          if (el) el.hidden = id !== target;
+        });
+        if (target === "tab-digest") tickDigest();
+      });
+    });
+  }
+  initTabbar();
+
+  function setDigestVisibility(visible){
+    var tab = $("digestTab");
+    var panel = $("tab-digest");
+    if (tab) tab.hidden = !visible;
+    if (visible) return;
+    var wasActive = tab && tab.dataset.active === "true";
+    if (panel) panel.hidden = true;
+    if (wasActive) {
+      tab.dataset.active = "false";
+      var systemTab = document.querySelector('[data-tab="tab-sistema"]');
+      if (systemTab) systemTab.dataset.active = "true";
+      $("tab-sistema").hidden = false;
+    }
+  }
+
   function initTheme(){
     var stored = null;
     try { stored = localStorage.getItem("sb-theme"); } catch(e){}
@@ -951,7 +1069,7 @@
     } else {
       setProgress("resourceBattery", "batteryProgress", "batteryBar", null);
       $("batteryValue").textContent = "—";
-      $("batteryMeta").textContent = "sem leitura";
+      $("batteryMeta").textContent = battery.reason || "sem leitura";
       $("batteryNow").textContent = "—";
     }
 
@@ -1047,7 +1165,7 @@
     services.forEach(function(service){ list.appendChild(createOpsItem(service, "service")); });
   }
 
-  function renderOperation(cron, services){
+  function renderOperation(cron, services, digestData){
     var list = $("operationList");
     list.textContent = "";
     var jobs = cron && Array.isArray(cron.jobs) ? cron.jobs : [];
@@ -1056,12 +1174,13 @@
     var serverJob = findBy(jobs, "kind", "server-box");
     var digestService = findBy(monitored, "id", "newsdigest");
     var serverService = findBy(monitored, "id", "server-box");
-    var scheduler = findBy(monitored, "id", "crond");
     var digestState = digestJob && digestJob.state || digestService && digestService.state || "unknown";
-    var serverState = serverService && serverService.state || scheduler && scheduler.state || "unknown";
+    var serverState = serverService && serverService.state || "unknown";
+    var hasDigest = Boolean(digestData || digestJob || digestService);
+    var routineJobs = jobs.filter(function(job){ return job.kind !== "newsdigest" && job.kind !== "server-box"; });
     var items = [];
 
-    if (digestJob || digestService) {
+    if (hasDigest) {
       items.push({
         name: "Newsdigest",
         state: digestState,
@@ -1070,13 +1189,37 @@
         label: digestState === "ok" ? "agendado" : STATE_LABELS[digestState] || "sem leitura",
       });
     }
-    if (serverService || scheduler || serverJob) {
+    if (serverService || serverJob) {
       items.push({
         name: "Server-box",
         state: serverState,
-        detail: scheduler && scheduler.state === "ok" ? "crond ativo" : "agendador não confirmado",
+        detail: serverState === "ok" ? "painel e métricas online" : "processo não confirmado",
         meta: serverService && serverService.pid ? "PID " + serverService.pid : serverJob && serverJob.next_run ? "próxima verificação " + fmtDateTime(serverJob.next_run) : "PID não confirmado",
         label: serverState === "ok" ? "ativo" : STATE_LABELS[serverState] || "sem leitura",
+      });
+    }
+
+    routineJobs.forEach(function(job){
+      items.push({
+        name: job.name || "Rotina",
+        state: job.state || "unknown",
+        detail: job.schedule || "agendamento não informado",
+        meta: job.next_run ? "próxima " + fmtDateTime(job.next_run) : "agendamento registrado",
+        label: job.state === "ok" ? "agendado" : STATE_LABELS[job.state] || "sem leitura",
+      });
+    });
+
+    var hasRoutines = hasDigest || routineJobs.length > 0;
+    $("operationHelp").textContent = hasRoutines
+      ? "O server-box fica online sozinho. Cada cron configurado aparece aqui com o próximo horário."
+      : "O painel já está online. Crons são opcionais; quando você criar uma rotina automática, ela aparecerá aqui.";
+    if (!hasRoutines) {
+      items.push({
+        name: "Rotinas",
+        state: "idle",
+        detail: "Nenhum cron configurado",
+        meta: "Este espaço será preenchido pelos seus agendamentos",
+        label: "não configurado",
       });
     }
 
@@ -1157,12 +1300,15 @@
 
   function renderStatus(data, latency){
     var status = data && data.status ? data.status : { state:"offline", label:"Offline", reason:"Sem resposta do host.", issues:[] };
+    var device = data && data.j5 && data.j5.device;
+    $("deviceLabel").textContent = (device && device.name ? device.name : "Android") + " · pocket VPS";
     var state = status.state || "unknown";
     var at = data && Number(data.at);
     var age = Number.isFinite(at) ? Math.max(0, Date.now() - at) : Infinity;
     var stale = state !== "offline" && age > STALE_AFTER_MS;
+    setStatusFavicon(state);
     setState(document.body, state);
-    setState($("connectionStatus"), state === "offline" ? "offline" : stale ? "warn" : "ok");
+    setState($("connectionStatus"), state === "offline" ? "offline" : stale ? "warn" : state);
     $("connectionLabel").textContent = state === "offline" ? "servidor fora do ar" : stale ? "atualização atrasada · " + fmtClock(data && data.at) : "ao vivo · " + fmtClock(data && data.at);
     $("connectionStatus").title = latency == null ? "" : "Última resposta em " + latency + " ms";
     $("latencyMeta").textContent = latency == null ? "resposta —" : "resposta " + latency + " ms";
@@ -1186,13 +1332,150 @@
   function render(data, latency){
     renderStatus(data, latency);
     renderResources(data && data.j5);
-    renderOperation(data && data.cron, data && data.services);
+    renderOperation(data && data.cron, data && data.services, data && data.j5 && data.j5.digest);
     HIST = data && data.history ? data.history : {};
     HIST_STATS = data && data.history_stats ? data.history_stats : {};
     redraw();
     renderChartInsights();
     loaded = true;
   }
+
+  function createDigestSource(item){
+    var row = document.createElement("article");
+    row.className = "resource-row";
+    setState(row, item.ok ? "ok" : "error");
+    var copy = document.createElement("div");
+    copy.className = "resource-copy";
+    var name = document.createElement("span");
+    name.className = "resource-name";
+    name.textContent = escapeText(item.name);
+    var meta = document.createElement("span");
+    meta.className = "resource-meta";
+    meta.textContent = item.count == null ? "sem leitura" : item.count + " itens" + (item.latest ? " · última " + relative(item.latest) : "");
+    if (item.error) meta.textContent += " · " + escapeText(item.error).slice(0, 60);
+    copy.append(name, meta);
+    var value = document.createElement("div");
+    value.className = "resource-value";
+    value.textContent = item.ok ? "ok" : "falha";
+    row.append(copy, value);
+    return row;
+  }
+
+  function createDigestDay(day){
+    var row = document.createElement("article");
+    row.className = "resource-row";
+    setState(row, day.errors ? "error" : day.rejected || day.no_hot ? "warn" : "ok");
+    var copy = document.createElement("div");
+    copy.className = "resource-copy";
+    var name = document.createElement("span");
+    name.className = "resource-name";
+    name.textContent = day.date;
+    var meta = document.createElement("span");
+    meta.className = "resource-meta";
+    var parts = [];
+    parts.push(day.runs + (day.runs === 1 ? " rodada" : " rodadas"));
+    parts.push(day.items + " itens em " + day.sent + " envios");
+    if (day.rejected) parts.push(day.rejected + " rejeitadas pelo LLM");
+    if (day.no_hot) parts.push(day.no_hot + " sem notícia quente");
+    if (day.nothing) parts.push(day.nothing + " sem novidade");
+    if (day.errors) parts.push(day.errors + " erros");
+    meta.textContent = parts.join(" · ");
+    copy.append(name, meta);
+    var value = document.createElement("div");
+    value.className = "resource-value";
+    value.textContent = day.errors ? "com erros" : day.items ? "ok" : "sem envio";
+    row.append(copy, value);
+    return row;
+  }
+
+  function createDigestRun(run){
+    var article = document.createElement("article");
+    article.className = "ops-item";
+    var state = /^ERRO/.test(run.msg) ? "error" : run.msg.indexOf("enviado digest") !== -1 ? "ok" : run.msg.indexOf("sem notícia quente") !== -1 || run.msg.indexOf("nada enviado") !== -1 || run.msg.indexOf("não aprovou") !== -1 ? "warn" : "ok";
+    setState(article, state);
+    var main = document.createElement("div");
+    main.className = "ops-main";
+    var title = document.createElement("div");
+    title.className = "ops-title";
+    var mark = document.createElement("span");
+    mark.className = "state-mark";
+    mark.setAttribute("aria-hidden", "true");
+    var heading = document.createElement("h3");
+    heading.textContent = run.msg.slice(0, 90);
+    heading.title = run.msg;
+    title.append(mark, heading);
+    main.appendChild(title);
+    var meta = document.createElement("div");
+    meta.className = "item-meta";
+    var time = document.createElement("span");
+    time.textContent = fmtDateTime(run.time);
+    meta.appendChild(time);
+    main.appendChild(meta);
+    article.append(main);
+    return article;
+  }
+
+  function renderDigest(data){
+    if (!data) return;
+    $("digestMeta").textContent = data.last_run ? "última rodada " + relative(data.last_run) : "sem rodada registrada";
+    $("digestSentValue").textContent = data.sent_total == null ? "—" : String(data.sent_total);
+    var sources = Array.isArray(data.sources) ? data.sources : [];
+    var okCount = sources.filter(function(s){ return s.ok; }).length;
+    $("digestSourcesValue").textContent = sources.length ? okCount + "/" + sources.length : "—";
+    $("digestSourcesMeta").textContent = sources.length ? okCount + " de " + sources.length + " saudáveis" : "sem leitura";
+    $("digestPendingValue").textContent = data.pending_documente == null ? "—" : String(data.pending_documente);
+
+    var sourceList = $("digestSources");
+    sourceList.textContent = "";
+    if (!sources.length) {
+      var emptySource = document.createElement("div");
+      emptySource.className = "empty-item";
+      emptySource.textContent = "Sem leitura de fontes ainda.";
+      sourceList.appendChild(emptySource);
+    } else {
+      $("digestSourceCount").textContent = sources.length + (sources.length === 1 ? " fonte" : " fontes");
+      sources.forEach(function(source){ sourceList.appendChild(createDigestSource(source)); });
+    }
+
+    var dayList = $("digestDays");
+    dayList.textContent = "";
+    var days = Array.isArray(data.days) ? data.days : [];
+    if (!days.length) {
+      var emptyDay = document.createElement("div");
+      emptyDay.className = "empty-item";
+      emptyDay.textContent = "Sem rodadas registradas.";
+      dayList.appendChild(emptyDay);
+    } else {
+      days.forEach(function(day){ dayList.appendChild(createDigestDay(day)); });
+    }
+
+    var runList = $("digestRuns");
+    runList.textContent = "";
+    var runs = Array.isArray(data.last_runs) ? data.last_runs : [];
+    if (!runs.length) {
+      var emptyRun = document.createElement("div");
+      emptyRun.className = "empty-item";
+      emptyRun.textContent = "Registro vazio.";
+      runList.appendChild(emptyRun);
+    } else {
+      runs.forEach(function(run){ runList.appendChild(createDigestRun(run)); });
+    }
+  }
+
+  function tickDigest(){
+    return fetch("/api/digest-stats", { cache: "no-store" })
+      .then(function(response){
+        if (!response.ok) throw new Error("status " + response.status);
+        return response.json();
+      })
+      .then(function(data){
+        setDigestVisibility(Boolean(data && data.available));
+        if (data && data.available) renderDigest(data);
+      })
+      .catch(function(){ $("digestMeta").textContent = "sem conexão com o digest"; });
+  }
+  tickDigest();
+  setInterval(tickDigest, 60000);
 
   function tick(){
     if (requestInFlight) return Promise.resolve();
@@ -1212,7 +1495,7 @@
         setConnection("offline", "sem conexão");
         $("latencyMeta").textContent = "sem resposta";
         if (!loaded) {
-          renderStatus({ status:{ state:"offline", label:"Offline", reason:"Não foi possível alcançar o server-box.", issues:[{ state:"offline", message:"Confira a conexão com o J5." }] } }, null);
+          renderStatus({ status:{ state:"offline", label:"Offline", reason:"Não foi possível alcançar o server-box.", issues:[{ state:"offline", message:"Confira a conexão com o aparelho." }] } }, null);
         }
       })
       .finally(function(){ requestInFlight = false; });
